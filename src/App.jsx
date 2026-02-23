@@ -4,16 +4,8 @@ import { useState, useCallback, useRef, useEffect } from "react";
 const TRAIL_API = 'https://trail-game-pro-3-2.onrender.com';
 const TRAIL_PLAYER = new URLSearchParams(window.location.search).get('player') || null;
 
-function calcAlt(score) {
-  if (score >= 1000) return 30;
-  if (score >= 500)  return 20;
-  if (score >= 100)  return 10;
-  return 5;
-}
-
-async function sendResultToTrail(score) {
+async function sendResultToTrail(score, alt) {
   if (!TRAIL_PLAYER) return 0;
-  const alt = calcAlt(score);
   try {
     await fetch(`${TRAIL_API}/api/external/game-result`, {
       method: 'POST',
@@ -243,7 +235,7 @@ export default function YakubunKoubou() {
     setTotalAlt(newTotal); setHighScore(newHi); setClearedDiffs(newCl);
     saveAlt(newTotal, newHi, newCl);
     // TRAIL GP3: send result
-    sendResultToTrail(score).then(alt => setTrailAlt(alt));
+    sendResultToTrail(score, earned).then(alt => setTrailAlt(alt));
   }, [phase]);
 
   const startGame = useCallback((m, d) => {
