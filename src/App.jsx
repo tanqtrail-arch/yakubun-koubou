@@ -1,10 +1,46 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 
+// ─── TRAIL GP3 連携 ───
+const TRAIL_API = 'https://trail-game-pro-3-2.onrender.com';
+const TRAIL_PLAYER = new URLSearchParams(window.location.search).get('player') || null;
+
+function calcAlt(score) {
+  if (score >= 1000) return 30;
+  if (score >= 500)  return 20;
+  if (score >= 100)  return 10;
+  return 5;
+}
+
+async function sendResultToTrail(score) {
+  if (!TRAIL_PLAYER) return 0;
+  const alt = calcAlt(score);
+  try {
+    await fetch(`${TRAIL_API}/api/external/game-result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        player: TRAIL_PLAYER,
+        game_id: 'yakubun-koubou',
+        game_name: '約分工房',
+        score: score,
+        alt: alt
+      })
+    });
+  } catch (e) {
+    console.error('ALT送信失敗:', e);
+  }
+  return alt;
+}
+
+function goHome() {
+  window.location.href = TRAIL_PLAYER
+    ? 'https://trail-game-pro-3-2.onrender.com'
+    : window.location.href.split('?')[0];
+}
+
 const HAND_MAX = 8;
 const DECK_SIZE = 23;
 const TURN_TIME = 60;
-const LINE_ID = "@trail_official";
-const GAME_NAME = "約分工房";
 
 function shuffle(a) { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
 function rollDice(diff) {
@@ -93,8 +129,7 @@ export default function YakubunKoubou() {
   const [sessionAlt, setSessionAlt] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [clearedDiffs, setClearedDiffs] = useState({});
-  const [reportName, setReportName] = useState("");
-  const [reportConfirm, setReportConfirm] = useState(false);
+  const [trailAlt, setTrailAlt] = useState(0);
   // Ranking
   const [rankScreen, setRankScreen] = useState(false);
   const [rankTab, setRankTab] = useState("weekly"); // weekly | alltime
@@ -207,6 +242,8 @@ export default function YakubunKoubou() {
     const newCl = { ...clearedDiffs, [key]: true };
     setTotalAlt(newTotal); setHighScore(newHi); setClearedDiffs(newCl);
     saveAlt(newTotal, newHi, newCl);
+    // TRAIL GP3: send result
+    sendResultToTrail(score).then(alt => setTrailAlt(alt));
   }, [phase]);
 
   const startGame = useCallback((m, d) => {
@@ -218,7 +255,7 @@ export default function YakubunKoubou() {
     setPhase("rolling"); setWildMap({}); setWildPicker(null);
     setReorderTarget(null); setScorePopup(null); setPickPicker(false); setOpPicker(false);
     setSpecials({ redraw: 3, reroll: 3, pick: 3, pickop: 3 }); setSpecialPenalty(0); setSessionAlt(0); setTimer(TURN_TIME);
-    setRankRegistered(false); setRankResult(null);
+    setRankRegistered(false); setRankResult(null); setTrailAlt(0);
   }, []);
 
   const hit = (r, x, y) => r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
@@ -329,12 +366,6 @@ export default function YakubunKoubou() {
     if (id === "pickop") { setOpPicker(true); setMsg(`（-${sp.cost}pt）`); }
   };
 
-  const sendLineReport = () => {
-    const m = `【${GAME_NAME} ALT報告】\n名前: ${reportName}\n💰 ${totalAlt}ALT\nハイスコア: ${highScore}点\n難易度: ${Object.keys(clearedDiffs).length}種クリア`;
-    window.open(`https://line.me/R/oaMessage/${LINE_ID}/?${encodeURIComponent(m)}`, "_blank");
-    setTotalAlt(0); setSessionAlt(0); saveAlt(0, highScore, clearedDiffs); setReportConfirm(false);
-  };
-
   const nv = calcVal(numZone), dv = calcVal(denZone);
   const match = nv != null && dv != null && dv !== 0 && Math.abs(nv / dv - diceNum / diceDen) < 0.0001;
   const previewPts = match ? (numZone.length + denZone.length) * 10 + Math.floor((numZone.length + denZone.length) * 10 * combo * 0.3) : 0;
@@ -399,27 +430,6 @@ export default function YakubunKoubou() {
       </div>
 
       <button onClick={() => { loadRankings(); setRankScreen(true); setRankDiff(diff); }} style={{ padding: `${s(10)}px ${s(24)}px`, fontSize: s(16), fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: "linear-gradient(135deg,#e67e22,#d35400)", color: "#fff", border: "3px solid #bf6516", borderRadius: s(12), cursor: "pointer", letterSpacing: 3, marginBottom: 16, boxShadow: "0 2px 10px rgba(230,126,34,0.3)" }}>🏆 ランキング</button>
-
-      {/* LINE Report */}
-      <div style={{ width: "100%", maxWidth: 340, background: "linear-gradient(180deg,#0d1b2a,#1b2838)", borderRadius: 14, padding: 16, border: "2px solid #2e4057" }}>
-        <div style={{ fontSize: 14, fontWeight: 900, color: "#a5d6a7", marginBottom: 10 }}>💰 ALTをTRAILに報告する</div>
-        <input value={reportName} onChange={e => setReportName(e.target.value)} placeholder="なまえを入力" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "2px solid #37474f", background: "#263238", color: "#e0e0e0", fontSize: 14, fontFamily: "'Zen Maru Gothic',serif", fontWeight: 700, marginBottom: 8, outline: "none" }} />
-        <button onClick={() => { if (totalAlt > 0 && reportName.trim()) setReportConfirm(true); }} disabled={totalAlt === 0 || !reportName.trim()} style={{ width: "100%", padding: "10px", borderRadius: 10, fontSize: 15, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: totalAlt > 0 && reportName.trim() ? "linear-gradient(135deg,#06d6a0,#00b894)" : "#37474f", color: totalAlt > 0 && reportName.trim() ? "#fff" : "#78909c", border: "none", cursor: totalAlt > 0 && reportName.trim() ? "pointer" : "default", letterSpacing: 2 }}>💬 LINEで報告する</button>
-        {totalAlt === 0 && <div style={{ fontSize: 10, color: "#78909c", marginTop: 4 }}>ALTが0のため報告できません</div>}
-      </div>
-
-      {reportConfirm && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, backdropFilter: "blur(3px)" }}>
-          <div style={{ background: "#1b2838", borderRadius: 16, padding: 24, border: "2px solid #2e4057", textAlign: "center", maxWidth: 300, width: "90%" }}>
-            <div style={{ fontSize: 16, fontWeight: 900, color: "#ffd54f", marginBottom: 12 }}>⚠️ {totalAlt}ALTを報告してリセットします</div>
-            <div style={{ fontSize: 12, color: "#90a4ae", marginBottom: 16 }}>LINEで送信後、ALTは0に戻ります</div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              <button onClick={() => setReportConfirm(false)} style={{ padding: "10px 20px", borderRadius: 10, fontSize: 14, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: "#37474f", color: "#ccc", border: "none", cursor: "pointer" }}>やめる</button>
-              <button onClick={sendLineReport} style={{ padding: "10px 20px", borderRadius: 10, fontSize: 14, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: "linear-gradient(135deg,#06d6a0,#00b894)", color: "#fff", border: "none", cursor: "pointer" }}>OK！送る</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Ranking Screen */}
       {rankScreen && (
@@ -584,15 +594,24 @@ export default function YakubunKoubou() {
           </div>
           <div style={{ fontSize: 12, color: "#a5d6a7", marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: 8, fontWeight: 800 }}>累計: 🪙 {totalAlt} ALT</div>
         </div>
-        <button onClick={() => setPhase("title")} style={{ padding: "12px 30px", fontSize: 17, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: W, color: "#fff", border: "2px solid #a08060", borderRadius: 12, cursor: "pointer", letterSpacing: 4 }}>🔨 もう一度</button>
+        {TRAIL_PLAYER && trailAlt > 0 && (
+          <div style={{ background: "linear-gradient(135deg,#0d47a1,#1565c0)", borderRadius: 12, padding: "10px 16px", marginBottom: 14, border: "2px solid #42a5f5", animation: "fadeIn 1s" }}>
+            <div style={{ fontSize: 16, fontWeight: 900, color: "#bbdefb" }}>🪙 {trailAlt} ALT を獲得！</div>
+            <div style={{ fontSize: 10, color: "#90caf9", marginTop: 4 }}>TRAIL GP3 に送信しました</div>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setPhase("title")} style={{ padding: "12px 30px", fontSize: 17, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: W, color: "#fff", border: "2px solid #a08060", borderRadius: 12, cursor: "pointer", letterSpacing: 4 }}>🔨 もう一度</button>
+          <button onClick={goHome} style={{ padding: "12px 24px", fontSize: 15, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: "linear-gradient(135deg,#546e7a,#455a64)", color: "#fff", border: "2px solid #78909c", borderRadius: 12, cursor: "pointer", letterSpacing: 2 }}>🏠 ホームに戻る</button>
+        </div>
 
         {/* Ranking registration - normal mode only */}
         {mode === "normal" && !rankRegistered && (
           <div style={{ marginTop: 14, background: "rgba(139,111,71,0.08)", borderRadius: 12, padding: "10px 14px", border: "1.5px solid rgba(139,111,71,0.2)" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: "#8b6f47", marginBottom: 6 }}>🏆 ランキングに登録</div>
             <div style={{ display: "flex", gap: 6 }}>
-              <input value={rankName || reportName} onChange={e => setRankName(e.target.value)} placeholder="なまえ" style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "2px solid #a08060", background: "#fff", fontSize: 14, fontFamily: "'Zen Maru Gothic',serif", fontWeight: 700, outline: "none" }} />
-              <button onClick={() => { const n = (rankName || reportName).trim(); if (n) { registerScore(n, finalScore, diff); if (!reportName) setReportName(n); } }} disabled={!(rankName || reportName).trim()} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: (rankName || reportName).trim() ? "linear-gradient(135deg,#e67e22,#d35400)" : "#ccc", color: "#fff", border: "none", cursor: (rankName || reportName).trim() ? "pointer" : "default" }}>登録</button>
+              <input value={rankName} onChange={e => setRankName(e.target.value)} placeholder="なまえ" style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "2px solid #a08060", background: "#fff", fontSize: 14, fontFamily: "'Zen Maru Gothic',serif", fontWeight: 700, outline: "none" }} />
+              <button onClick={() => { const n = rankName.trim(); if (n) { registerScore(n, finalScore, diff); } }} disabled={!rankName.trim()} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 900, fontFamily: "'Zen Maru Gothic',serif", background: rankName.trim() ? "linear-gradient(135deg,#e67e22,#d35400)" : "#ccc", color: "#fff", border: "none", cursor: rankName.trim() ? "pointer" : "default" }}>登録</button>
             </div>
           </div>
         )}
