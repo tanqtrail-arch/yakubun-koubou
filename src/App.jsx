@@ -4,10 +4,10 @@ import { useState, useCallback, useRef, useEffect } from "react";
 const TRAIL_API = 'https://trail-game-pro-3-2.onrender.com';
 const TRAIL_PLAYER = new URLSearchParams(window.location.search).get('player') || null;
 
-async function sendResultToTrail(score, alt) {
+async function sendResultToTrail(score, correctCount, totalCount, maxStreak) {
   if (!TRAIL_PLAYER) return 0;
   try {
-    await fetch(`${TRAIL_API}/api/external/game-result`, {
+    const res = await fetch(`${TRAIL_API}/api/external/game-result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -15,19 +15,34 @@ async function sendResultToTrail(score, alt) {
         game_id: 'yakubun-koubou',
         game_name: '約分工房',
         score: score,
-        alt: alt
+        correct_count: correctCount,
+        total_count: totalCount,
+        max_streak: maxStreak
       })
     });
+    if (res.ok) {
+      const data = await res.json();
+      return data.alt || 0;
+    }
   } catch (e) {
     console.error('ALT送信失敗:', e);
   }
-  return alt;
+  return 0;
 }
 
 function goHome() {
-  window.location.href = TRAIL_PLAYER
-    ? 'https://trail-game-pro-3-2.onrender.com'
-    : window.location.href.split('?')[0];
+  window.close();
+  // window.close()が効かない場合のフォールバック
+  setTimeout(() => {
+    document.body.innerHTML = `
+      <div style="text-align:center; padding:60px 20px; font-family:sans-serif;
+                  background:#f5e6c8; color:#3e2723; min-height:100vh;
+                  display:flex; flex-direction:column; justify-content:center; align-items:center;">
+        <h2 style="font-size:24px; margin-bottom:16px;">🔨 お疲れさまでした！</h2>
+        <p style="font-size:16px; color:#8b6f47;">ブラウザのタブから<br>TRAILポータルに戻ってください。</p>
+      </div>
+    `;
+  }, 500);
 }
 
 const HAND_MAX = 8;
@@ -130,11 +145,13 @@ export default function YakubunKoubou() {
   const [rankRegistered, setRankRegistered] = useState(false);
   const [rankResult, setRankResult] = useState(null); // { weekly: N, alltime: N }
   const [rankName, setRankName] = useState("");
+  const [correctCount, setCorrectCount] = useState(0);
 
   const [winW, setWinW] = useState(typeof window !== "undefined" ? window.innerWidth : 400);
-  useEffect(() => { const h = () => setWinW(window.innerWidth); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
-  // Scale: 1.0 for phone (<500), up to 1.6 for tablet (768+)
-  const S = winW >= 768 ? 1.6 : winW >= 600 ? 1.3 : 1.0;
+  const [winH, setWinH] = useState(typeof window !== "undefined" ? window.innerHeight : 700);
+  useEffect(() => { const h = () => { setWinW(window.innerWidth); setWinH(window.innerHeight); }; window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+  // Scale: gentle scaling for tablet/PC, capped to avoid clipping
+  const S = winW >= 1024 ? 1.35 : winW >= 768 ? 1.2 : winW >= 600 ? 1.1 : 1.0;
   const s = (v) => Math.round(v * S);
 
   const timerRef = useRef(null);
@@ -235,7 +252,7 @@ export default function YakubunKoubou() {
     setTotalAlt(newTotal); setHighScore(newHi); setClearedDiffs(newCl);
     saveAlt(newTotal, newHi, newCl);
     // TRAIL GP3: send result
-    sendResultToTrail(score, earned).then(alt => setTrailAlt(alt));
+    sendResultToTrail(score, correctCount, round - 1, maxCombo).then(alt => setTrailAlt(alt));
   }, [phase]);
 
   const startGame = useCallback((m, d) => {
@@ -243,7 +260,7 @@ export default function YakubunKoubou() {
     const dk = createDeck().map(c => ({ ...c, uid: mkUid() })); const h = dk.splice(0, HAND_MAX);
     setDeck(dk); setHand(h); setMode(m); setDiff(d);
     setDiceNum(null); setDiceDen(null); setNumZone([]); setDenZone([]);
-    setMsg("サイコロを振ろう！"); setRound(1); setScore(0); setTotalUsed(0); setCombo(0); setMaxCombo(0);
+    setMsg("サイコロを振ろう！"); setRound(1); setScore(0); setTotalUsed(0); setCombo(0); setMaxCombo(0); setCorrectCount(0);
     setPhase("rolling"); setWildMap({}); setWildPicker(null);
     setReorderTarget(null); setScorePopup(null); setPickPicker(false); setOpPicker(false);
     setSpecials({ redraw: 3, reroll: 3, pick: 3, pickop: 3 }); setSpecialPenalty(0); setSessionAlt(0); setTimer(TURN_TIME);
@@ -332,7 +349,7 @@ export default function YakubunKoubou() {
     if (Math.abs(nv / dv - diceNum / diceDen) > 0.0001) { setMsg(`${nv}/${dv} ≠ ${diceNum}/${diceDen}`); return; }
     const used = numZone.length + denZone.length, nc = combo + 1; if (nc > maxCombo) setMaxCombo(nc);
     const base = used * 10, cb = Math.floor(base * (nc - 1) * 0.3), pts = base + cb;
-    setCombo(nc); setScore(s => s + pts); setTotalUsed(t => t + used);
+    setCombo(nc); setScore(s => s + pts); setTotalUsed(t => t + used); setCorrectCount(c => c + 1);
     setScorePopup({ points: pts, combo: nc, key: Date.now() }); setTimeout(() => setScorePopup(null), 1400);
     const rem = [...hand]; setNumZone([]); setDenZone([]); setWildMap({}); setRound(r => r + 1);
     const willEnd = deck.length <= 0 && rem.length < HAND_MAX;
@@ -476,7 +493,7 @@ export default function YakubunKoubou() {
 
   return (
     <div onPointerMove={onPM} onPointerUp={onPU} onPointerCancel={onPU} onTouchMove={onPM} onTouchEnd={onPU} onTouchCancel={onPU}
-      style={{ height: "100vh", overflow: "hidden", background: "linear-gradient(180deg,#e8d5a8,#d4b88c 50%,#c4a87a)", fontFamily: "'Zen Maru Gothic',serif", color: INK, padding: "3px", display: "flex", flexDirection: "column", gap: 2, touchAction: "none", userSelect: "none", WebkitUserSelect: "none", position: "relative", overscrollBehavior: "none", maxWidth: 700, margin: "0 auto", width: "100%" }}>
+      style={{ height: "100vh", overflow: "hidden", background: "linear-gradient(180deg,#e8d5a8,#d4b88c 50%,#c4a87a)", fontFamily: "'Zen Maru Gothic',serif", color: INK, padding: "3px", display: "flex", flexDirection: "column", gap: 2, touchAction: "none", userSelect: "none", WebkitUserSelect: "none", position: "relative", overscrollBehavior: "none", maxWidth: winW >= 768 ? 600 : 500, margin: "0 auto", width: "100%" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700;900&display=swap');@keyframes diceRoll{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.2)}100%{transform:rotate(360deg) scale(1)}}@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes popUp{0%{opacity:0;transform:translate(-50%,-40%) scale(0.5)}20%{opacity:1;transform:translate(-50%,-50%) scale(1.2)}40%{transform:translate(-50%,-50%) scale(1)}80%{opacity:1;transform:translate(-50%,-60%) scale(1)}100%{opacity:0;transform:translate(-50%,-80%) scale(0.8)}}@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}@keyframes altUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-40px)}}@keyframes slideInOut{0%{opacity:0;transform:translateX(30px)}10%{opacity:1;transform:translateX(0)}80%{opacity:1;transform:translateX(0)}100%{opacity:0;transform:translateX(-30px)}}@keyframes countPop{0%{opacity:0;transform:scale(0.3)}30%{opacity:1;transform:scale(1.2)}60%{transform:scale(1)}100%{opacity:0.6;transform:scale(1)}}*{box-sizing:border-box;margin:0;padding:0}html,body{overflow:hidden;overscroll-behavior:none}`}</style>
       {rGhost()}
       {scorePopup && (<div key={scorePopup.key} style={{ position: "absolute", top: "35%", left: "50%", zIndex: 150, pointerEvents: "none", animation: "popUp 1.4s ease-out forwards" }}><div style={{ background: "linear-gradient(135deg,#ff6f00,#ff8f00)", color: "#fff", borderRadius: 16, padding: "14px 28px", textAlign: "center", boxShadow: "0 4px 24px rgba(255,111,0,0.4)", border: "3px solid #ffe082" }}><div style={{ fontSize: 36, fontWeight: 900 }}>+{scorePopup.points}<span style={{ fontSize: 16 }}>pt</span></div>{scorePopup.combo > 1 && <div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>🔥{scorePopup.combo}コンボ！</div>}</div></div>)}
@@ -547,13 +564,13 @@ export default function YakubunKoubou() {
         </div>
       )}
 
-      <div style={{ padding: "4px", minHeight: 0, flex: 1, background: "rgba(255,255,255,0.3)", borderRadius: 10, border: "2px solid rgba(160,128,96,0.25)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "4px", minHeight: 0, flex: 1, background: "rgba(255,255,255,0.3)", borderRadius: 10, border: "2px solid rgba(160,128,96,0.25)", display: "flex", flexDirection: "column", overflow: "auto" }}>
         <div style={{ fontSize: s(10), color: "#8b6f47", marginBottom: 2, paddingLeft: 3, fontWeight: 700, flexShrink: 0 }}>🃏 手札 ({handTotal})</div>
         <div data-scrollable="true" style={{ display: "flex", gap: s(4), flexWrap: "wrap", justifyContent: "center", alignContent: "flex-start", overflowY: "auto", flex: 1, padding: "1px 0" }}>{hand.map(c => rCard(c, "hand", null))}</div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, padding: "0 1px", flexShrink: 0 }}>
-        {SPECIALS.map(sp => { const cnt = specials[sp.id], dis = !canUseSpecial(sp.id); return (<button key={sp.id} onClick={() => useSpecial(sp.id)} disabled={dis} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: s(5), padding: `${s(6)}px ${s(4)}px`, borderRadius: s(10), cursor: dis ? "default" : "pointer", background: dis ? "rgba(139,111,71,0.06)" : "linear-gradient(180deg,#fff8e1,#ffcc80)", border: dis ? "2px solid rgba(139,111,71,0.12)" : "2.5px solid #e67e22", opacity: dis ? 0.3 : 1, fontFamily: "'Zen Maru Gothic',serif", boxShadow: dis ? "none" : "0 2px 8px rgba(230,126,34,0.25)" }}><span style={{ fontSize: s(22) }}>{sp.emoji}</span><div style={{ textAlign: "left" }}><div style={{ fontSize: s(11), fontWeight: 900, color: dis ? "#999" : "#e65100", lineHeight: 1.1 }}>{sp.name}</div><div style={{ fontSize: s(9), color: dis ? "#bbb" : "#c62828", fontWeight: 700 }}>残{cnt} / -{sp.cost}pt</div></div></button>); })}
+        {SPECIALS.map(sp => { const cnt = specials[sp.id], dis = !canUseSpecial(sp.id); return (<button key={sp.id} onClick={() => useSpecial(sp.id)} disabled={dis} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: s(5), padding: `${s(6)}px ${s(4)}px`, minHeight: 44, borderRadius: s(10), cursor: dis ? "default" : "pointer", background: dis ? "rgba(139,111,71,0.06)" : "linear-gradient(180deg,#fff8e1,#ffcc80)", border: dis ? "2px solid rgba(139,111,71,0.12)" : "2.5px solid #e67e22", opacity: dis ? 0.3 : 1, fontFamily: "'Zen Maru Gothic',serif", boxShadow: dis ? "none" : "0 2px 8px rgba(230,126,34,0.25)", touchAction: "manipulation" }}><span style={{ fontSize: s(22) }}>{sp.emoji}</span><div style={{ textAlign: "left" }}><div style={{ fontSize: s(11), fontWeight: 900, color: dis ? "#999" : "#e65100", lineHeight: 1.1 }}>{sp.name}</div><div style={{ fontSize: s(9), color: dis ? "#bbb" : "#c62828", fontWeight: 700 }}>残{cnt} / -{sp.cost}pt</div></div></button>); })}
       </div>
       {/* Last 10s warning - small banner at bottom, non-blocking */}
       {mode === "normal" && phase === "playing" && timer <= 10 && timer > 3 && (
